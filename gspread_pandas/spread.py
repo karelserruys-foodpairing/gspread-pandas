@@ -3,7 +3,7 @@ from re import match
 
 import numpy as np
 import pandas as pd
-from gspread import Spreadsheet, Worksheet
+from gspread import Spreadsheet, Worksheet, Cell
 from gspread.exceptions import (
     APIError,
     NoValidUrlKeyFound,
@@ -567,6 +567,8 @@ class Spread:
     def clear_sheet(self, rows=1, cols=1, sheet=None):
         """
         Reset open worksheet to a blank sheet with given dimensions.
+        If sheet contains frozen rows and columns, the minimum resizing will be
+        frozen_rows + 1 and frowzen_cols + 1.
 
         Parameters
         ----------
@@ -585,25 +587,27 @@ class Spread:
         """
         self._ensure_sheet(sheet)
 
-        # TODO: if my merge request goes through, use sheet.frozen_*_count
-        frozen_rows = self._sheet_metadata["properties"]["gridProperties"].get(
-            "frozenRowCount", 0
-        )
-        frozen_cols = self._sheet_metadata["properties"]["gridProperties"].get(
-            "frozenColumnCount", 0
-        )
+        grid_properties = self._sheet_metadata["properties"]["gridProperties"]
+        frozen_rows = grid_properties.get("frozenRowCount", 0)
+        frozen_cols = grid_properties.get("frozenColumnCount", 0)
 
-        row_resize = max(rows, frozen_rows + 1)
-        col_resize = max(cols, frozen_cols + 1)
-
-        # resize to smallest possible size first
-        # https://issuetracker.google.com/issues/213126648
-        # TODO: these 2 operations could be done in a single batchUpdate call
+        # at least 1 non-frozen row/col is needs to remain in the sheet
         self.sheet.resize(frozen_rows + 1, frozen_cols + 1)
-        self.sheet.resize(row_resize, col_resize)
 
-        # clear the value on the first cell since it didn't get deleted above
-        self.update_cells(start=(1, 1), end=(1, 1), vals=[""])
+        # clear all cells
+        self.sheet.update_cells(
+            [
+                Cell(r, c, "")
+                for r in range(1, frozen_rows + 2)
+                for c in range(1, frozen_cols + 2)
+            ]
+        )
+
+        # reshape sheet to desired size
+        resize_rows = max(rows, frozen_rows + 1)
+        resize_cols = max(cols, frozen_cols + 1)
+
+        self.sheet.resize(resize_rows, resize_cols)
 
     def delete_sheet(self, sheet):
         """
